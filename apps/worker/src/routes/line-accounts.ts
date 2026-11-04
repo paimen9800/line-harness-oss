@@ -350,6 +350,90 @@ lineAccounts.get('/api/line-accounts/:id/follower-insight', async (c) => {
   }
 });
 
+/**
+ * GET /api/line-accounts/:id/webhook-health
+ * Returns secrets-free diagnostic information for webhook troubleshooting.
+ * Includes: secret hash prefix (for verification without exposure), last inbound time,
+ * recent signature mismatch stats, and follower count.
+ */
+lineAccounts.get('/api/line-accounts/:id/webhook-health', async (c) => {
+  try {
+    const db = c.env.DB;
+    const id = c.req.param('id');
+    const account = await getLineAccountById(db, id);
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+
+    // Compute a safe hash prefix of the channel secret (first 8 chars of SHA-256 hex)
+    // for comparison against LINE console without revealing the secret itself
+    let secretHashPrefix: string | null = null;
+    if (account.channel_secret) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(account.channel_secret);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+      secretHashPrefix = hashHex.slice(0, 8);
+    }
+
+    // Get recent webhook stats (last 7 days)
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    
+    const statsRow = await db
+      .prepare(`
+        SELECT
+          COALESCE(SUM(inbound_count), 0) as total_inbound,
+          MAX(stat_date) as last_inbound_date
+        FROM webhook_signature_stats
+        WHERE line_account_id = ? AND stat_date >= ?
+      `)
+      .bind(id, weekAgo)
+      .first<{ total_inbound: number; last_inbound_date: string | null }>();
+
+    // Get global mismatch count for the same period
+    const mismatchRow = await db
+      .prepare(`
+        SELECT COALESCE(SUM(signature_mismatch_count), 0) as total_mismatches
+        FROM webhook_signature_stats
+        WHERE line_account_id IS NULL AND stat_date >= ?
+      `)
+      .bind(weekAgo)
+      .first<{ total_mismatches: number }>();
+
+    // Get following friend count for this account
+    const friendCountRow = await db
+      .prepare(
+        'SELECT COUNT(*) as count FROM friends WHERE line_account_id = ? AND is_following = 1',
+      )
+      .bind(id)
+      .first<{ count: number }>();
+
+    return c.json({
+      success: true,
+      data: {
+        lineAccountId: id,
+        name: account.name,
+        isActive: Boolean(account.is_active),
+        secretHashPrefix,
+        secretUpdatedAt: (account as { secret_updated_at?: string | null }).secret_updated_at ?? null,
+        lastInboundAt: (account as { last_inbound_at?: string | null }).last_inbound_at ?? null,
+        webhook7DayStats: {
+          inboundCount: statsRow?.total_inbound ?? 0,
+          lastInboundDate: statsRow?.last_inbound_date ?? null,
+          globalMismatchCount: mismatchRow?.total_mismatches ?? 0,
+        },
+        followingFriendCount: friendCountRow?.count ?? 0,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/line-accounts/:id/webhook-health error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // Existing-follower migration is an explicit, persisted, one-time job.
 // No cron polls LINE: connection/UI performs a one-item capability probe, then
 // operator-approved step requests advance the D1 cursor until completion.

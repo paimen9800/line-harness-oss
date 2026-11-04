@@ -20,6 +20,9 @@ export interface LineAccount {
   og_site_name: string | null;
   og_default_image_url: string | null;
   og_default_description: string | null;
+  last_inbound_at: string | null;
+  last_signature_mismatch_at: string | null;
+  secret_updated_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -205,6 +208,9 @@ export async function updateLineAccount(
   if (updates.channel_secret !== undefined) {
     fields.push('channel_secret = ?');
     values.push(updates.channel_secret);
+    // Track when the channel secret was last updated for observability
+    fields.push('secret_updated_at = ?');
+    values.push(jstNow());
   }
   if (updates.login_channel_id !== undefined) {
     fields.push('login_channel_id = ?');

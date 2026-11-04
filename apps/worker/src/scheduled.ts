@@ -235,6 +235,21 @@ export async function scheduled(
     );
   }
 
+  // Inbound silence monitor — check for accounts with no webhook activity.
+  // Run every 6 hours (on the 6h cron tick) since 72h silence threshold means
+  // checking more frequently adds overhead without improving detection time.
+  if (event.cron === '0 */6 * * *') {
+    try {
+      const { checkInboundSilence } = await import('./services/inbound-silence-monitor.js');
+      const result = await checkInboundSilence(env.DB);
+      if (result.alerted > 0) {
+        console.log(`[inbound-silence] checked=${result.checked} alerted=${result.alerted}`);
+      }
+    } catch (e) {
+      console.error('inbound-silence-monitor error:', e);
+    }
+  }
+
   await Promise.allSettled(jobs);
 
   // Fetch broadcast insights (runs daily, self-throttled)

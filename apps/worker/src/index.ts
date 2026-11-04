@@ -79,6 +79,7 @@ import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
 import { adminSso } from './routes/admin-sso.js';
 import { mediaInquiries } from './routes/media-inquiries.js';
+import { webhookStats } from './routes/webhook-stats.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
 import { buildOgHtml } from './lib/og-html.js';
 import { loginUnconfiguredPage } from './lib/login-unconfigured.js';
@@ -232,6 +233,7 @@ app.route('/', openapi);
 app.route('/', liffRoutes);
 app.route('/', affiliateSelfRoutes);
 app.route('/', mediaInquiries);
+app.route('/', webhookStats);
 
 // Mount route groups — Round 3
 app.route('/', webhooks);
