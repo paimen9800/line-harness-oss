@@ -36,6 +36,51 @@ const webhook = new Hono<Env>();
 // 128 MB Cloudflare Workers memory ceiling.
 const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
 
+/**
+ * Record a successful inbound webhook for the matched account.
+ * Updates last_inbound_at and increments daily inbound count.
+ * Best-effort: failures are logged but do not affect webhook response.
+ */
+async function recordSuccessfulInbound(db: D1Database, accountId: string): Promise<void> {
+  const now = jstNow();
+  const statDate = now.slice(0, 10); // YYYY-MM-DD
+  try {
+    await db.batch([
+      db.prepare('UPDATE line_accounts SET last_inbound_at = ? WHERE id = ?').bind(now, accountId),
+      db.prepare(`
+        INSERT INTO webhook_signature_stats (id, line_account_id, stat_date, inbound_count, created_at, updated_at)
+        VALUES (?, ?, ?, 1, ?, ?)
+        ON CONFLICT (line_account_id, stat_date) DO UPDATE SET
+          inbound_count = inbound_count + 1,
+          updated_at = excluded.updated_at
+      `).bind(crypto.randomUUID(), accountId, statDate, now, now),
+    ]);
+  } catch (err) {
+    console.error('[webhook] Failed to record successful inbound:', err);
+  }
+}
+
+/**
+ * Record a signature mismatch event (no account matched the signature).
+ * Updates a global mismatch counter (line_account_id IS NULL) for visibility.
+ * Best-effort: failures are logged but do not affect webhook response.
+ */
+async function recordSignatureMismatch(db: D1Database, _accountId: null): Promise<void> {
+  const now = jstNow();
+  const statDate = now.slice(0, 10); // YYYY-MM-DD
+  try {
+    await db.prepare(`
+      INSERT INTO webhook_signature_stats (id, line_account_id, stat_date, signature_mismatch_count, created_at, updated_at)
+      VALUES (?, NULL, ?, 1, ?, ?)
+      ON CONFLICT (line_account_id, stat_date) DO UPDATE SET
+        signature_mismatch_count = signature_mismatch_count + 1,
+        updated_at = excluded.updated_at
+    `).bind(crypto.randomUUID(), statDate, now, now).run();
+  } catch (err) {
+    console.error('[webhook] Failed to record signature mismatch:', err);
+  }
+}
+
 async function ensureFriendFromWebhookUser(
   db: D1Database,
   lineClient: LineClient,
@@ -104,7 +149,11 @@ webhook.post('/webhook', async (c) => {
   // for junk traffic on a public endpoint.
   const LINE_SIGNATURE_LENGTH = 44;
   if (signature.length !== LINE_SIGNATURE_LENGTH) {
-    console.error('Missing or malformed LINE signature');
+    console.log(JSON.stringify({
+      type: 'webhook_signature',
+      result: 'missing_or_malformed',
+      signatureLength: signature.length,
+    }));
     return c.json({ status: 'ok' }, 200);
   }
 
@@ -148,8 +197,26 @@ webhook.post('/webhook', async (c) => {
   }
 
   if (!valid) {
-    console.error('Invalid LINE signature');
+    console.log(JSON.stringify({
+      type: 'webhook_signature',
+      result: 'all_mismatch',
+      message: 'Signature did not match any registered account',
+    }));
+    // Record signature mismatch for observability (async, best-effort)
+    c.executionCtx.waitUntil(recordSignatureMismatch(db, null));
     return c.json({ status: 'ok' }, 200);
+  }
+
+  // Log successful signature match (never log secrets or raw body)
+  console.log(JSON.stringify({
+    type: 'webhook_signature',
+    result: 'matched',
+    matchedAccountId: matchedAccountId ?? 'env_default',
+  }));
+
+  // Record successful inbound for the matched account (async, best-effort)
+  if (matchedAccountId) {
+    c.executionCtx.waitUntil(recordSuccessfulInbound(db, matchedAccountId));
   }
 
   let body: WebhookRequestBody;

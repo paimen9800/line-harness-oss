@@ -263,24 +263,44 @@ CREATE INDEX IF NOT EXISTS idx_users_external_id ON users (external_id);
 -- Round 2: LINE Account Management (Multi-Account)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS line_accounts (
-  id                     TEXT PRIMARY KEY,
-  channel_id             TEXT NOT NULL UNIQUE,
-  name                   TEXT NOT NULL,
-  channel_access_token   TEXT NOT NULL,
-  channel_secret         TEXT NOT NULL,
-  is_active              INTEGER NOT NULL DEFAULT 1,
-  country                TEXT,
-  role                   TEXT,
-  display_order          INTEGER NOT NULL DEFAULT 0,
-  og_site_name           TEXT,
-  og_default_image_url   TEXT,
-  og_default_description TEXT,
-  created_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id                         TEXT PRIMARY KEY,
+  channel_id                 TEXT NOT NULL UNIQUE,
+  name                       TEXT NOT NULL,
+  channel_access_token       TEXT NOT NULL,
+  channel_secret             TEXT NOT NULL,
+  is_active                  INTEGER NOT NULL DEFAULT 1,
+  country                    TEXT,
+  role                       TEXT,
+  display_order              INTEGER NOT NULL DEFAULT 0,
+  og_site_name               TEXT,
+  og_default_image_url       TEXT,
+  og_default_description     TEXT,
+  last_inbound_at            TEXT,
+  last_signature_mismatch_at TEXT,
+  secret_updated_at          TEXT,
+  created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);
+
+-- ============================================================
+-- Webhook Signature Stats (observability)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS webhook_signature_stats (
+  id                       TEXT PRIMARY KEY,
+  line_account_id          TEXT REFERENCES line_accounts(id) ON DELETE CASCADE,
+  stat_date                TEXT NOT NULL,
+  inbound_count            INTEGER NOT NULL DEFAULT 0,
+  signature_mismatch_count INTEGER NOT NULL DEFAULT 0,
+  created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE(line_account_id, stat_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_signature_stats_account_date
+  ON webhook_signature_stats (line_account_id, stat_date DESC);
 
 -- ============================================================
 -- Round 2: Conversion Points (CV Tracking)
