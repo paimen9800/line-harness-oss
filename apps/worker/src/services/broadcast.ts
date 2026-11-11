@@ -5,6 +5,7 @@ import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getBroadcastById,
   getBroadcasts,
+  getDueScheduledBroadcasts,
   getQueuedBroadcasts,
   updateBroadcastStatus,
   updateBroadcastBatchProgress,
@@ -465,15 +466,10 @@ export async function processScheduledBroadcasts(
   workerUrl?: string,
   quotaEnv?: QuotaEnv,
 ): Promise<void> {
-  const allBroadcasts = await getBroadcasts(db);
-
-  const nowMs = Date.now();
-  const scheduled = allBroadcasts.filter(
-    (b) =>
-      b.status === 'scheduled' &&
-      b.scheduled_at !== null &&
-      new Date(b.scheduled_at).getTime() <= nowMs,
-  );
+  // Use the optimized query that filters in SQL and omits the expensive
+  // per-row insight subquery. The insight data is not needed for send eligibility.
+  const nowIso = new Date().toISOString();
+  const scheduled = await getDueScheduledBroadcasts(db, nowIso);
 
   for (const broadcast of scheduled) {
     // Bulk sends pause while over quota. Re-checked per broadcast (not once
