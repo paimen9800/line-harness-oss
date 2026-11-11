@@ -59,6 +59,33 @@ LEFT JOIN broadcast_insights bi ON b.id = bi.broadcast_id
   return result.results;
 }
 
+/**
+ * Get broadcasts that are due for scheduled sending.
+ * Optimized for the cron path: filters in SQL and omits the expensive
+ * per-row insight subquery (insight data is not needed for send eligibility).
+ *
+ * @param nowIso - ISO 8601 timestamp for the due comparison (inclusive)
+ * @param limit - Maximum number of broadcasts to return (default 100)
+ */
+export async function getDueScheduledBroadcasts(
+  db: D1Database,
+  nowIso: string,
+  limit = 100,
+): Promise<Broadcast[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM broadcasts
+       WHERE status = 'scheduled'
+         AND scheduled_at IS NOT NULL
+         AND scheduled_at <= ?
+       ORDER BY scheduled_at ASC
+       LIMIT ?`,
+    )
+    .bind(nowIso, limit)
+    .all<Broadcast>();
+  return result.results;
+}
+
 export async function getBroadcastById(
   db: D1Database,
   id: string,

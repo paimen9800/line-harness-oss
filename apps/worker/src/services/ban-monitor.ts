@@ -36,11 +36,28 @@ export async function checkAccountHealth(
   // 小プランのアカウントが恒常的に誤 warning になる)。
   const includeLegacyNullRows = activeAccounts.length <= 1;
 
+  // Compute the global outgoing message count ONCE for the entire tick, then
+  // share it across all accounts. The previous code ran this same global COUNT
+  // inside each per-account loop iteration, multiplying D1 rows read by N_accounts.
+  // The count is used only for a threshold check (> 5000 → warning), so a single
+  // snapshot at tick start is semantically equivalent.
+  const jstMs = Date.now() + 9 * 60 * 60_000;
+  const oneHourAgo = new Date(jstMs - 60 * 60_000).toISOString().slice(0, -1) + '+09:00';
+  const globalSentRow = await db
+    .prepare(
+      `SELECT COUNT(*) as count FROM messages_log
+       WHERE direction = 'outgoing' AND created_at >= ?`,
+    )
+    .bind(oneHourAgo)
+    .first<{ count: number }>();
+  const globalTotalSent = globalSentRow?.count ?? 0;
+
   for (const account of activeAccounts) {
     try {
       await checkSingleAccount(db, account, {
         checkQuota: opts.checkQuota ?? false,
         includeLegacyNullRows,
+        globalTotalSent,
       });
     } catch (err) {
       console.error(`ヘルスチェックエラー (account ${account.id}):`, err);
@@ -51,25 +68,15 @@ export async function checkAccountHealth(
 async function checkSingleAccount(
   db: D1Database,
   account: { id: string; name?: string | null; channel_access_token: string },
-  quotaOpts: { checkQuota: boolean; includeLegacyNullRows: boolean },
+  quotaOpts: { checkQuota: boolean; includeLegacyNullRows: boolean; globalTotalSent: number },
 ): Promise<void> {
   const jstMs = Date.now() + 9 * 60 * 60_000;
   const now = new Date(jstMs);
   const checkPeriod = now.toISOString().slice(0, -1) + '+09:00';
 
-  // 直近1時間のメッセージログからエラーパターンを推定
-  // (実際のLINE APIエラーはログに残らないが、送信成功率から推定)
-  const oneHourAgo = new Date(jstMs - 60 * 60_000).toISOString().slice(0, -1) + '+09:00';
-
-  const sentMessages = await db
-    .prepare(
-      `SELECT COUNT(*) as count FROM messages_log
-       WHERE direction = 'outgoing' AND created_at >= ?`,
-    )
-    .bind(oneHourAgo)
-    .first<{ count: number }>();
-
-  const totalSent = sentMessages?.count ?? 0;
+  // Use the pre-computed global count passed from checkAccountHealth.
+  // This avoids running the same global COUNT query N_accounts times per tick.
+  const totalSent = quotaOpts.globalTotalSent;
 
   // LINE APIにヘルスチェックリクエスト
   let errorCode: number | null = null;

@@ -442,22 +442,28 @@ export async function enrollFriendInScenario(
 export async function getFriendScenariosDueForDelivery(
   db: D1Database,
   now: string,
+  limit = 100,
 ): Promise<FriendScenario[]> {
-  // Fetch all active scenarios with a delivery time, then filter by epoch comparison
-  // to handle mixed timestamp formats (Z and +09:00) during migration
+  // Filter in SQL using julianday() for reliable cross-timezone comparison.
+  // julianday() normalizes both Z and +09:00 timestamps to the same numeric
+  // scale, preserving the exact semantics of the previous epoch comparison.
+  // LIMIT bounds D1 rows read per cron tick; step-delivery already caps sends
+  // at MAX_SENDS_PER_CRON (40), so 100 provides headroom for skipped conditions
+  // while preventing unbounded scans.
   const result = await db
     .prepare(
       `SELECT fs.* FROM friend_scenarios fs
        INNER JOIN scenarios s ON fs.scenario_id = s.id
        WHERE fs.status = 'active'
          AND s.is_active = 1
-         AND fs.next_delivery_at IS NOT NULL`,
+         AND fs.next_delivery_at IS NOT NULL
+         AND julianday(fs.next_delivery_at) <= julianday(?)
+       ORDER BY julianday(fs.next_delivery_at) ASC
+       LIMIT ?`,
     )
+    .bind(now, limit)
     .all<FriendScenario>();
-  const nowMs = new Date(now).getTime();
-  return result.results
-    .filter((fs) => new Date(fs.next_delivery_at!).getTime() <= nowMs)
-    .sort((a, b) => new Date(a.next_delivery_at!).getTime() - new Date(b.next_delivery_at!).getTime());
+  return result.results;
 }
 
 /**
