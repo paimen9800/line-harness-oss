@@ -55,6 +55,25 @@ export function isHourlyTick(event: { cron: string; scheduledTime: number }): bo
   return new Date(event.scheduledTime).getUTCMinutes() === 0;
 }
 
+/**
+ * Interval for heavy D1 jobs (scheduled broadcasts and step deliveries) in minutes.
+ * These jobs run full-table queries that consume significant D1 rows read quota.
+ * Increasing this value reduces D1 cost but adds delivery latency.
+ * Change to 15 for lower-traffic deployments if needed.
+ */
+export const HEAVY_JOB_INTERVAL_MIN = 10;
+
+/**
+ * Gate for heavy D1 jobs (scheduled broadcasts, step deliveries).
+ * Returns true when scheduledTime's UTC minute is divisible by HEAVY_JOB_INTERVAL_MIN.
+ * Uses event.scheduledTime (not Date.now()) to avoid clock drift issues.
+ * The 6h cron is excluded to prevent double execution at 6h boundaries.
+ */
+export function isHeavyJobTick(event: { cron: string; scheduledTime: number }): boolean {
+  if (event.cron === '0 */6 * * *') return false;
+  return new Date(event.scheduledTime).getUTCMinutes() % HEAVY_JOB_INTERVAL_MIN === 0;
+}
+
 // Scheduled handler — Cron Trigger と DO alarm (durable-objects/tenant-scheduler.ts)
 // の双方から呼ばれる共通ジョブ本体。index.ts から切り出しているのは、
 // tenant-scheduler.ts がこの関数を import する際に index.ts 自体との
@@ -204,11 +223,22 @@ export async function scheduled(
   // startBulkSendJobs が直列 (queued → scheduled → step) に切り替える。並列だと
   // 各ジョブが自分のスナップショットしか見ず合算で上限を超えられるため。
   // リマインダー等クォータ対象外のジョブは従来どおり常に並列。
+  //
+  // processScheduledBroadcasts と processStepDeliveries は D1 rows read の主要消費源
+  // (getBroadcasts の全件スキャン + 相関サブクエリ、getFriendScenariosDueForDelivery の
+  // friend_scenarios 全件スキャン)。毎分実行すると D1 free tier を超過し得るため、
+  // HEAVY_JOB_INTERVAL_MIN 分ごとに間引く。processQueuedBroadcasts は status='sending'
+  // の行だけ読むインデックス検索なので毎分実行を維持する。
   const jobs = [];
+  const heavyTick = isHeavyJobTick(event);
   jobs.push(...startBulkSendJobs(env, [
     () => processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env),
-    () => processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env),
-    () => processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL, env),
+    () => heavyTick
+      ? processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env)
+      : Promise.resolve(),
+    () => heavyTick
+      ? processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL, env)
+      : Promise.resolve(),
   ]));
   jobs.push(processReminderDeliveries(env.DB, defaultLineClient));
 

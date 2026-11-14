@@ -32,7 +32,7 @@ describe('isFiveMinuteTick', () => {
   });
 });
 
-import { isHourlyTick } from './scheduled.js';
+import { isHourlyTick, isHeavyJobTick, HEAVY_JOB_INTERVAL_MIN } from './scheduled.js';
 
 describe('isHourlyTick', () => {
   test('分=0 の tick だけ true (分足・5分足どちらの cron でも)', () => {
@@ -44,5 +44,48 @@ describe('isHourlyTick', () => {
 
   test('6時間足の cron では false（同じ分に二重で走らせない）', () => {
     expect(isHourlyTick(tick('0 */6 * * *', 0))).toBe(false);
+  });
+});
+
+describe('isHeavyJobTick', () => {
+  test('HEAVY_JOB_INTERVAL_MIN is 10 by default', () => {
+    expect(HEAVY_JOB_INTERVAL_MIN).toBe(10);
+  });
+
+  test('returns true when UTC minute is divisible by HEAVY_JOB_INTERVAL_MIN', () => {
+    expect(isHeavyJobTick(tick('* * * * *', 0))).toBe(true);
+    expect(isHeavyJobTick(tick('* * * * *', 10))).toBe(true);
+    expect(isHeavyJobTick(tick('* * * * *', 20))).toBe(true);
+    expect(isHeavyJobTick(tick('* * * * *', 30))).toBe(true);
+    expect(isHeavyJobTick(tick('* * * * *', 40))).toBe(true);
+    expect(isHeavyJobTick(tick('* * * * *', 50))).toBe(true);
+  });
+
+  test('returns false when UTC minute is NOT divisible by HEAVY_JOB_INTERVAL_MIN', () => {
+    expect(isHeavyJobTick(tick('* * * * *', 1))).toBe(false);
+    expect(isHeavyJobTick(tick('* * * * *', 5))).toBe(false);
+    expect(isHeavyJobTick(tick('* * * * *', 9))).toBe(false);
+    expect(isHeavyJobTick(tick('* * * * *', 11))).toBe(false);
+    expect(isHeavyJobTick(tick('* * * * *', 15))).toBe(false);
+    expect(isHeavyJobTick(tick('* * * * *', 59))).toBe(false);
+  });
+
+  test('works with 5-minute cron as well', () => {
+    expect(isHeavyJobTick(tick('*/5 * * * *', 0))).toBe(true);
+    expect(isHeavyJobTick(tick('*/5 * * * *', 10))).toBe(true);
+    expect(isHeavyJobTick(tick('*/5 * * * *', 5))).toBe(false);
+    expect(isHeavyJobTick(tick('*/5 * * * *', 15))).toBe(false);
+  });
+
+  test('6時間足の cron では false（二重実行防止）', () => {
+    expect(isHeavyJobTick(tick('0 */6 * * *', 0))).toBe(false);
+  });
+
+  test('runs 6 times per hour (at minutes 0, 10, 20, 30, 40, 50)', () => {
+    let count = 0;
+    for (let m = 0; m < 60; m++) {
+      if (isHeavyJobTick(tick('* * * * *', m))) count++;
+    }
+    expect(count).toBe(6);
   });
 });
