@@ -22,10 +22,10 @@ vi.mock('./quota-alert.js', () => ({
 const { checkAccountHealth } = await import('./ban-monitor.js');
 
 /** messages_log の集計だけを返す最小の D1 スタブ。 */
-function dbStub(): D1Database {
+function dbStub(globalCount = 0): D1Database {
   return {
     prepare: () => ({
-      bind: () => ({ first: async () => ({ count: 0 }) }),
+      bind: () => ({ first: async () => ({ count: globalCount }) }),
     }),
   } as unknown as D1Database;
 }
@@ -179,5 +179,44 @@ describe('checkAccountHealth', () => {
 
     expect(getLinePlanQuotaShortfall).not.toHaveBeenCalled();
     expect(notifyQuotaAlert).not.toHaveBeenCalled();
+  });
+
+  test('グローバル messages_log COUNT が 5000 を超えると warning になる', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    getAccountHealthLogs.mockResolvedValue([log('normal', null)]);
+
+    await checkAccountHealth(dbStub(5001));
+
+    expect(createAccountHealthLog).toHaveBeenCalledTimes(1);
+    expect(createAccountHealthLog.mock.calls[0][1]).toMatchObject({
+      riskLevel: 'warning',
+    });
+  });
+
+  test('messages_log COUNT は全アカウントで1回だけ実行される (D1 rows read 削減)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    getAccountHealthLogs.mockResolvedValue([]);
+    getLineAccounts.mockResolvedValue([
+      { id: 'acc-1', channel_access_token: 'token', is_active: 1 },
+      { id: 'acc-2', channel_access_token: 'token', is_active: 1 },
+      { id: 'acc-3', channel_access_token: 'token', is_active: 1 },
+    ]);
+
+    let countQueryCalls = 0;
+    const db = {
+      prepare: (sql: string) => {
+        if (sql.includes('messages_log')) countQueryCalls++;
+        return {
+          bind: () => ({ first: async () => ({ count: 100 }) }),
+        };
+      },
+    } as unknown as D1Database;
+
+    await checkAccountHealth(db);
+
+    // The global COUNT query should only run once, not 3 times
+    expect(countQueryCalls).toBe(1);
+    // But we should still have processed all 3 accounts
+    expect(createAccountHealthLog).toHaveBeenCalledTimes(3);
   });
 });
