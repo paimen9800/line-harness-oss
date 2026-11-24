@@ -6,6 +6,13 @@ compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 workers_dev = true
 
+# keep_vars = true: wrangler deploy will NOT delete existing plain_text vars.
+# This is a safety measure so that a normal `wrangler deploy --env production`
+# (without remembering --keep-vars flag) cannot wipe live environment variables.
+# The --keep-vars CLI flag is now redundant but harmless.
+# Note: Secrets are never deleted by deploy regardless of this setting.
+keep_vars = true
+
 # ═══════════════════════════════════════════════════════════════
 # デフォルト環境 = 開発・テスト用
 # 使い方: npx wrangler deploy
@@ -90,17 +97,18 @@ CF_ACCOUNT_ID = "YOUR_DEV_ACCOUNT_ID"
 # ═══════════════════════════════════════════════════════════════
 # 本番環境 — line-harness-seikatsu
 #
-# DEPLOY COMMAND (preserves live vars):
-#   npx wrangler deploy --env production --keep-vars
+# DEPLOY COMMAND:
+#   npx wrangler deploy --env production
+#
+# The top-level keep_vars = true ensures existing vars are preserved.
+# The --keep-vars CLI flag is redundant but harmless if added.
 #
 # D1 migrations:
 #   npx wrangler d1 execute line-crm --env production --remote --file ...
 #
 # IMPORTANT:
-# - Use --keep-vars flag to preserve existing plain_text vars on the live Worker.
-#   Without it, wrangler deploy REPLACES all vars with what's in this config (nothing).
-# - Secrets are never deleted by deploy regardless of --keep-vars.
 # - Do NOT add placeholder [env.production.vars] — that would overwrite live values.
+# - Secrets are never deleted by deploy regardless of keep_vars.
 # ═══════════════════════════════════════════════════════════════
 [env.production]
 name = "line-harness-seikatsu"
@@ -115,6 +123,10 @@ compatibility_flags = ["nodejs_compat"]
 # if disabled or absent, this also preserves that state.
 # UNCONFIRMED: Verify via Cloudflare dashboard or test request if cache behavior matters.
 
+# UNCONFIRMED: Whether run_worker_first matches live production cannot be verified
+# from the settings API. It was added in commit 8dd667d (2026-05-19), before the
+# 9/13 build, so it's likely present. If routing differs after deploy, this may
+# be the cause — verify via test request to static asset paths.
 [env.production.assets]
 directory = "dist/client"
 binding = "ASSETS"
