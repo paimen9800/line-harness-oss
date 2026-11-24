@@ -1,12 +1,18 @@
 name = "line-harness"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
+# Default env uses both flags for stricter fetch behavior in dev/test.
+# Production uses only "nodejs_compat" (live API confirmed 2026-11-24).
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 workers_dev = true
 
 # ═══════════════════════════════════════════════════════════════
-# デフォルト = テスト環境
+# デフォルト環境 = 開発・テスト用
 # 使い方: npx wrangler deploy
+#
+# WARNING: This is NOT production. The name is "line-harness" (not
+# "line-harness-seikatsu"), so deploying this env cannot overwrite production.
+# To deploy to production, use: npx wrangler deploy --env production
 # ═══════════════════════════════════════════════════════════════
 account_id = "YOUR_DEV_ACCOUNT_ID"
 
@@ -82,16 +88,32 @@ LIFF_PUBLIC_URL = "https://line-harness-liff.pages.dev"
 CF_ACCOUNT_ID = "YOUR_DEV_ACCOUNT_ID"
 
 # ═══════════════════════════════════════════════════════════════
-# 本番環境
-# 使い方: npx wrangler deploy --env production --name your-worker-name
-# D1:     npx wrangler d1 execute your-database --env production --remote --file ...
+# 本番環境 — line-harness-seikatsu
+#
+# DEPLOY COMMAND (preserves live vars):
+#   npx wrangler deploy --env production --keep-vars
+#
+# D1 migrations:
+#   npx wrangler d1 execute line-crm --env production --remote --file ...
+#
+# IMPORTANT:
+# - Use --keep-vars flag to preserve existing plain_text vars on the live Worker.
+#   Without it, wrangler deploy REPLACES all vars with what's in this config (nothing).
+# - Secrets are never deleted by deploy regardless of --keep-vars.
+# - Do NOT add placeholder [env.production.vars] — that would overwrite live values.
 # ═══════════════════════════════════════════════════════════════
 [env.production]
-account_id = "YOUR_ACCOUNT_ID"
-compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+name = "line-harness-seikatsu"
+# Production uses only "nodejs_compat" (confirmed from live API 2026-11-24).
+# "global_fetch_strictly_public" is NOT in production; adding it could change behavior.
+compatibility_flags = ["nodejs_compat"]
 
-[env.production.cache]
-enabled = false
+# [cache] status in production is UNCONFIRMED (not visible in settings API).
+# The 2026-09-13 build predates the [cache] addition (commit 3ae1c2b), so it
+# likely had no cache config. Omitting [env.production.cache] entirely to avoid
+# changing unknown live behavior. If cache was enabled, this preserves it;
+# if disabled or absent, this also preserves that state.
+# UNCONFIRMED: Verify via Cloudflare dashboard or test request if cache behavior matters.
 
 [env.production.assets]
 directory = "dist/client"
@@ -101,11 +123,13 @@ run_worker_first = true
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "line-crm"
-database_id = "YOUR_D1_DATABASE_ID"
+# Live production database_id (confirmed from live API 2026-11-24)
+database_id = "965e8ffb-6221-4087-85b8-4109cd22c75f"
 
 [[env.production.r2_buckets]]
 binding = "IMAGES"
-bucket_name = "line-harness-images"
+# Live production bucket name (confirmed from live API 2026-11-24)
+bucket_name = "line-harness-seikatsu-images"
 
 # production 環境も DO バインディングなし (本番の line-harness-seikatsu に合わせる)。
 # [[env.production.durable_objects.bindings]]
