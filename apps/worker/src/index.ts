@@ -161,12 +161,12 @@ export type Env = {
     QUOTA_MONTHLY_MESSAGES_MAX?: string;
     /** Optional URL shown to admins when a quota is exceeded. */
     QUOTA_NOTICE_URL?: string;
-    // 分・6時間の定期ジョブを自走させる DO。バインディング名 TENANT_SCHEDULER は
-    // テナントを自動プロビジョニングする側 (scripts/lib/tenant-wrangler.ts) にも
-    // 同名で書いてあり、ここと食い違うと「デプロイは成功するがアラームは一生
-    // armed されない」という気づきにくい壊れ方をするので、変更するときは
-    // 両方揃えること。実体は durable-objects/tenant-scheduler.ts の TenantScheduler。
-    TENANT_SCHEDULER: DurableObjectNamespace<TenantScheduler>;
+    // 分・6時間の定期ジョブを自走させる DO。本番 (line-harness-seikatsu) には
+    // 一度もバインドされていないため optional。将来バインドする場合は
+    // wrangler.toml の durable_objects.bindings と migrations を復活させる。
+    // コードは durable-objects/tenant-scheduler.ts に残しており、
+    // ensureSchedulerArmed は TENANT_SCHEDULER が undefined の場合を考慮済み。
+    TENANT_SCHEDULER?: DurableObjectNamespace<TenantScheduler>;
   };
   Variables: {
     staff: import('./middleware/auth.js').AuthenticatedStaff;
