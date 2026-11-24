@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { isFiveMinuteTick } from './scheduled.js';
+import { isFiveMinuteTick, isHourlyTick, isHeavyJobTick, HEAVY_JOB_INTERVAL_MIN } from './scheduled.js';
 
 /** UTC の分を指定して tick イベントを作る。 */
 function tick(cron: string, utcMinute: number) {
@@ -32,8 +32,6 @@ describe('isFiveMinuteTick', () => {
   });
 });
 
-import { isHourlyTick } from './scheduled.js';
-
 describe('isHourlyTick', () => {
   test('分=0 の tick だけ true (分足・5分足どちらの cron でも)', () => {
     expect(isHourlyTick(tick('* * * * *', 0))).toBe(true);
@@ -44,5 +42,85 @@ describe('isHourlyTick', () => {
 
   test('6時間足の cron では false（同じ分に二重で走らせない）', () => {
     expect(isHourlyTick(tick('0 */6 * * *', 0))).toBe(false);
+  });
+});
+
+describe('isHeavyJobTick', () => {
+  test('HEAVY_JOB_INTERVAL_MIN is 10 by default', () => {
+    expect(HEAVY_JOB_INTERVAL_MIN).toBe(10);
+  });
+
+  describe('毎分 cron (* * * * *)', () => {
+    test('UTC分が HEAVY_JOB_INTERVAL_MIN の倍数のとき true', () => {
+      expect(isHeavyJobTick(tick('* * * * *', 0))).toBe(true);
+      expect(isHeavyJobTick(tick('* * * * *', 10))).toBe(true);
+      expect(isHeavyJobTick(tick('* * * * *', 20))).toBe(true);
+      expect(isHeavyJobTick(tick('* * * * *', 30))).toBe(true);
+      expect(isHeavyJobTick(tick('* * * * *', 40))).toBe(true);
+      expect(isHeavyJobTick(tick('* * * * *', 50))).toBe(true);
+    });
+
+    test('UTC分が HEAVY_JOB_INTERVAL_MIN の倍数でないとき false', () => {
+      expect(isHeavyJobTick(tick('* * * * *', 1))).toBe(false);
+      expect(isHeavyJobTick(tick('* * * * *', 5))).toBe(false);
+      expect(isHeavyJobTick(tick('* * * * *', 9))).toBe(false);
+      expect(isHeavyJobTick(tick('* * * * *', 11))).toBe(false);
+      expect(isHeavyJobTick(tick('* * * * *', 15))).toBe(false);
+      expect(isHeavyJobTick(tick('* * * * *', 59))).toBe(false);
+    });
+
+    test('1時間に6回 (0,10,20,30,40,50) だけ true', () => {
+      let count = 0;
+      for (let m = 0; m < 60; m++) {
+        if (isHeavyJobTick(tick('* * * * *', m))) count++;
+      }
+      expect(count).toBe(6);
+    });
+  });
+
+  describe('5分足 cron (*/5 * * * *, 本番)', () => {
+    test('分=0,10,20,30,40,50 のとき true (2回に1回の tick)', () => {
+      expect(isHeavyJobTick(tick('*/5 * * * *', 0))).toBe(true);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 10))).toBe(true);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 20))).toBe(true);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 30))).toBe(true);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 40))).toBe(true);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 50))).toBe(true);
+    });
+
+    test('分=5,15,25,35,45,55 のとき false (10分境界でない)', () => {
+      expect(isHeavyJobTick(tick('*/5 * * * *', 5))).toBe(false);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 15))).toBe(false);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 25))).toBe(false);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 35))).toBe(false);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 45))).toBe(false);
+      expect(isHeavyJobTick(tick('*/5 * * * *', 55))).toBe(false);
+    });
+
+    test('*/5 cron の12 tick/h のうち半分 (6回/h) だけ true', () => {
+      const fiveMinTicks = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+      let count = 0;
+      for (const m of fiveMinTicks) {
+        if (isHeavyJobTick(tick('*/5 * * * *', m))) count++;
+      }
+      expect(count).toBe(6);
+    });
+  });
+
+  describe('6時間足 cron (0 */6 * * *)', () => {
+    test('常に false（二重実行防止）', () => {
+      expect(isHeavyJobTick(tick('0 */6 * * *', 0))).toBe(false);
+    });
+
+    test('6h boundary でも false (分=0 だが cron 判定で弾く)', () => {
+      // 00:00, 06:00, 12:00, 18:00 — すべて false
+      for (const hour of [0, 6, 12, 18]) {
+        const event = {
+          cron: '0 */6 * * *',
+          scheduledTime: Date.UTC(2026, 7, 26, hour, 0),
+        };
+        expect(isHeavyJobTick(event)).toBe(false);
+      }
+    });
   });
 });
